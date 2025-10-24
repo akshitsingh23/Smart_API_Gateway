@@ -1,33 +1,45 @@
 const express = require('express');
 const axios = require('axios');
+const { LRUCache } = require('./middleware/cacheManager');
+const { logRequest } = require('./middleware/logger');
+const metrics = require('./utils/metricsCollector');
+
 const app = express();
 const PORT = 4000;
 
-// Simple in-memory cache stub
-const cache = {}; // key: URL, value: response
+const cache = new LRUCache(5);
 
-// Forward requests to backend
+// Log every request
+app.use(logRequest);
+
+// Forward requests
 app.use('/api/*', async (req, res) => {
+  metrics.incrementRequest();
   const url = `http://localhost:5000${req.originalUrl}`;
 
-  // Check cache first
-  if (cache[url]) {
+  if (cache.get(url)) {
     console.log('Cache hit:', url);
-    return res.json(cache[url]);
+    metrics.incrementHit();
+    return res.json(cache.get(url));
   }
 
   try {
     console.log('Cache miss:', url);
-    const response = await axios.get(url);
+    metrics.incrementMiss();
 
-    // Store in cache (basic stub)
-    cache[url] = response.data;
+    const response = await axios.get(url);
+    cache.set(url, response.data);
 
     res.json(response.data);
   } catch (error) {
     console.error('Error forwarding request:', error.message);
     res.status(500).json({ error: 'Backend request failed' });
   }
+});
+
+// Endpoint to view metrics
+app.get('/metrics', (req, res) => {
+  res.json(metrics.getMetrics());
 });
 
 app.listen(PORT, () => {
